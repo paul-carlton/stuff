@@ -201,3 +201,272 @@ public class Main {
 
         GitHubChangeDetector detector = new
 
+**Paul Carlton**: Java client to detect files changed in a GitHub pull request and also a merge to main branch using a main and a separate class and generating unit tests using feign client
+
+**ChatGPT**: To create a **Java client** that detects:  
+1. **Files changed in a GitHub Pull Request**  
+2. **Files changed in a merge to the `main` branch**  
+
+Using **Feign Client**, we will:  
+- Use **Spring Boot + OpenFeign** for API interaction.  
+- Implement a **service layer (`GitHubService`)** to handle requests.  
+- Create a **unit test (`GitHubServiceTest`)** using **Mockito**.
+
+---
+
+## **Project Structure**
+```
+/GitHubChangeDetector
+│── /src
+│   ├── /main/java/com/example/github
+│   │   ├── GitHubFeignClient.java   # Feign Client Interface
+│   │   ├── GitHubService.java       # Service Layer
+│   │   ├── Main.java                # Main Application
+│   ├── /test/java/com/example/github
+│   │   ├── GitHubServiceTest.java   # Unit Test (JUnit & Mockito)
+│── pom.xml  (Maven Dependencies)
+```
+
+---
+
+## **1. Add Dependencies (Feign, Spring Boot, JSON Processing)**  
+Add the following to `pom.xml`:
+
+```xml
+<dependencies>
+    <!-- Spring Boot Web -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+
+    <!-- OpenFeign for GitHub API -->
+    <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-starter-openfeign</artifactId>
+    </dependency>
+
+    <!-- JSON Processing -->
+    <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+    </dependency>
+
+    <!-- JUnit & Mockito -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-test</artifactId>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
+```
+
+---
+
+## **2. `GitHubFeignClient.java` (Feign Client Interface)**  
+This interface makes requests to the GitHub API.
+
+```java
+package com.example.github;
+
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.PathVariable;
+import java.util.List;
+import java.util.Map;
+
+@FeignClient(name = "github-client", url = "https://api.github.com")
+public interface GitHubFeignClient {
+
+    @GetMapping("/repos/{owner}/{repo}/pulls/{prNumber}/files")
+    List<Map<String, Object>> getChangedFilesInPR(
+            @RequestHeader("Authorization") String token,
+            @PathVariable("owner") String owner,
+            @PathVariable("repo") String repo,
+            @PathVariable("prNumber") int prNumber
+    );
+
+    @GetMapping("/repos/{owner}/{repo}/commits/{branch}")
+    Map<String, Object> getChangedFilesInMerge(
+            @RequestHeader("Authorization") String token,
+            @PathVariable("owner") String owner,
+            @PathVariable("repo") String repo,
+            @PathVariable("branch") String branch
+    );
+}
+```
+
+---
+
+## **3. `GitHubService.java` (Service Layer)**
+Handles API calls and processes responses.
+
+```java
+package com.example.github;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+@Service
+public class GitHubService {
+    private static final String GITHUB_TOKEN = "Bearer your_personal_access_token";
+
+    @Autowired
+    private GitHubFeignClient gitHubFeignClient;
+
+    public List<String> getChangedFilesInPR(String owner, String repo, int prNumber) {
+        List<Map<String, Object>> response = gitHubFeignClient.getChangedFilesInPR(GITHUB_TOKEN, owner, repo, prNumber);
+        List<String> changedFiles = new ArrayList<>();
+
+        for (Map<String, Object> file : response) {
+            changedFiles.add((String) file.get("filename"));
+        }
+
+        return changedFiles;
+    }
+
+    public List<String> getChangedFilesInMerge(String owner, String repo, String branch) {
+        Map<String, Object> response = gitHubFeignClient.getChangedFilesInMerge(GITHUB_TOKEN, owner, repo, branch);
+        List<String> changedFiles = new ArrayList<>();
+
+        if (response.containsKey("files")) {
+            List<Map<String, Object>> files = (List<Map<String, Object>>) response.get("files");
+            for (Map<String, Object> file : files) {
+                changedFiles.add((String) file.get("filename"));
+            }
+        }
+
+        return changedFiles;
+    }
+}
+```
+
+---
+
+## **4. `Main.java` (Entry Point)**
+This calls `GitHubService` and prints changed files.
+
+```java
+package com.example.github;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+import java.util.List;
+
+@SpringBootApplication
+public class Main implements CommandLineRunner {
+    @Autowired
+    private GitHubService gitHubService;
+
+    public static void main(String[] args) {
+        SpringApplication.run(Main.class, args);
+    }
+
+    @Override
+    public void run(String... args) {
+        String owner = "your_github_username";
+        String repo = "your_repository";
+        int prNumber = 1;
+        String branch = "main";
+
+        List<String> prFiles = gitHubService.getChangedFilesInPR(owner, repo, prNumber);
+        System.out.println("Changed files in PR: " + prFiles);
+
+        List<String> mergeFiles = gitHubService.getChangedFilesInMerge(owner, repo, branch);
+        System.out.println("Changed files in merge: " + mergeFiles);
+    }
+}
+```
+
+---
+
+## **5. `GitHubServiceTest.java` (Unit Test)**
+Tests `GitHubService` using **Mockito**.
+
+```java
+package com.example.github;
+
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+
+import java.util.*;
+
+public class GitHubServiceTest {
+    @Mock
+    private GitHubFeignClient gitHubFeignClient;
+
+    @InjectMocks
+    private GitHubService gitHubService;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    void testGetChangedFilesInPR() {
+        List<Map<String, Object>> mockResponse = new ArrayList<>();
+        mockResponse.add(Map.of("filename", "src/Main.java"));
+        mockResponse.add(Map.of("filename", "src/Utils.java"));
+
+        when(gitHubFeignClient.getChangedFilesInPR(anyString(), anyString(), anyString(), anyInt()))
+                .thenReturn(mockResponse);
+
+        List<String> changedFiles = gitHubService.getChangedFilesInPR("owner", "repo", 1);
+        assertEquals(2, changedFiles.size());
+        assertTrue(changedFiles.contains("src/Main.java"));
+        assertTrue(changedFiles.contains("src/Utils.java"));
+    }
+
+    @Test
+    void testGetChangedFilesInMerge() {
+        Map<String, Object> mockResponse = new HashMap<>();
+        List<Map<String, Object>> files = new ArrayList<>();
+        files.add(Map.of("filename", "src/App.java"));
+        mockResponse.put("files", files);
+
+        when(gitHubFeignClient.getChangedFilesInMerge(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(mockResponse);
+
+        List<String> changedFiles = gitHubService.getChangedFilesInMerge("owner", "repo", "main");
+        assertEquals(1, changedFiles.size());
+        assertTrue(changedFiles.contains("src/App.java"));
+    }
+}
+```
+
+---
+
+## **Running the Application**
+1. **Start the Spring Boot App:**
+   ```sh
+   mvn spring-boot:run
+   ```
+2. **Run Tests:**
+   ```sh
+   mvn test
+   ```
+
+---
+
+## **Final Notes**
+- **Feign simplifies API calls** with minimal code.
+- **Spring Boot provides dependency injection** for better testability.
+- **Mockito ensures isolated unit tests**.
+
+Would you like further enhancements, such as **pagination** or **error handling**? 🚀
+
