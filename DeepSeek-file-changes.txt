@@ -1,0 +1,208 @@
+To solve this problem, we need to create a Java program that detects files changed in a GitHub pull request and a merge commit to the main branch. The solution involves interacting with the GitHub API to retrieve relevant data and parsing the JSON responses to extract the list of changed files. We will also generate unit tests to verify the functionality.
+
+### Approach
+1. **GitHub API Interaction**: Use Java's `HttpClient` to send HTTP requests to GitHub's API endpoints for pull requests and commits.
+2. **JSON Parsing**: Utilize Jackson library to parse JSON responses from GitHub API into Java objects.
+3. **Command-Line Interface**: Create a main class to handle command-line arguments for different modes (pull request or merge commit) and parameters (repository owner, name, PR number, or commit SHA).
+4. **Unit Tests**: Use JUnit to test the parsing logic with sample JSON responses to ensure correct extraction of filenames.
+
+### Solution Code
+
+#### GitHubClient.java
+```java
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.URI;
+import java.io.IOException;
+import java.util.List;
+import java.util.stream.Collectors;
+
+public class GitHubClient {
+    private static final String GITHUB_API_BASE = "https://api.github.com";
+    private final HttpClient httpClient;
+    private final ObjectMapper objectMapper;
+
+    public GitHubClient() {
+        this.httpClient = HttpClient.newHttpClient();
+        this.objectMapper = new ObjectMapper();
+    }
+
+    public List<String> getChangedFilesInPR(String owner, String repo, int prNumber) throws Exception {
+        String url = String.format("%s/repos/%s/%s/pulls/%d/files", GITHUB_API_BASE, owner, repo, prNumber);
+        String jsonResponse = sendGetRequest(url);
+        return parsePullRequestFiles(jsonResponse);
+    }
+
+    public List<String> getChangedFilesInMergeCommit(String owner, String repo, String commitSha) throws Exception {
+        String url = String.format("%s/repos/%s/%s/commits/%s", GITHUB_API_BASE, owner, repo, commitSha);
+        String jsonResponse = sendGetRequest(url);
+        CommitResponse commitResponse = objectMapper.readValue(jsonResponse, CommitResponse.class);
+        if (commitResponse.getParents().size() < 2) {
+            throw new IllegalArgumentException("Commit is not a merge commit");
+        }
+        return commitResponse.getFiles().stream()
+                .map(CommitFile::getFilename)
+                .collect(Collectors.toList());
+    }
+
+    private String sendGetRequest(String url) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("Accept", "application/vnd.github.v3+json")
+                .GET()
+                .build();
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString()).body();
+    }
+
+    private List<String> parsePullRequestFiles(String json) throws IOException {
+        PullRequestFile[] files = objectMapper.readValue(json, PullRequestFile[].class);
+        return List.of(files).stream()
+                .map(PullRequestFile::getFilename)
+                .collect(Collectors.toList());
+    }
+
+    private static class PullRequestFile {
+        private String filename;
+
+        public String getFilename() {
+            return filename;
+        }
+
+        public void setFilename(String filename) {
+            this.filename = filename;
+        }
+    }
+
+    private static class CommitResponse {
+        private List<CommitFile> files;
+        private List<Parent> parents;
+
+        public List<CommitFile> getFiles() {
+            return files;
+        }
+
+        public void setFiles(List<CommitFile> files) {
+            this.files = files;
+        }
+
+        public List<Parent> getParents() {
+            return parents;
+        }
+
+        public void setParents(List<Parent> parents) {
+            this.parents = parents;
+        }
+    }
+
+    private static class CommitFile {
+        private String filename;
+
+        public String getFilename() {
+            return filename;
+        }
+
+        public void setFilename(String filename) {
+            this.filename = filename;
+        }
+    }
+
+    private static class Parent {
+        private String sha;
+
+        public String getSha() {
+            return sha;
+        }
+
+        public void setSha(String sha) {
+            this.sha = sha;
+        }
+    }
+}
+```
+
+#### GitHubFileDetector.java
+```java
+import java.util.List;
+
+public class GitHubFileDetector {
+    public static void main(String[] args) {
+        if (args.length < 4) {
+            System.err.println("Usage: <mode> <owner> <repo> <identifier>");
+            System.err.println("Modes:");
+            System.err.println("  pr <owner> <repo> <prNumber> - Detect files changed in a pull request");
+            System.err.println("  merge <owner> <repo> <commitSha> - Detect files changed in a merge commit");
+            return;
+        }
+
+        String mode = args[0];
+        String owner = args[1];
+        String repo = args[2];
+        String identifier = args[3];
+
+        GitHubClient client = new GitHubClient();
+        try {
+            List<String> files;
+            if ("pr".equalsIgnoreCase(mode)) {
+                int prNumber = Integer.parseInt(identifier);
+                files = client.getChangedFilesInPR(owner, repo, prNumber);
+            } else if ("merge".equalsIgnoreCase(mode)) {
+                files = client.getChangedFilesInMergeCommit(owner, repo, identifier);
+            } else {
+                System.err.println("Invalid mode. Use 'pr' or 'merge'.");
+                return;
+            }
+            System.out.println("Changed files:");
+            files.forEach(System.out::println);
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid PR number: " + identifier);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+#### GitHubClientTest.java
+```java
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import java.util.List;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class GitHubClientTest {
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Test
+    public void testParsePullRequestFiles() throws Exception {
+        String json = "[{\"filename\": \"file1.txt\"}, {\"filename\": \"file2.txt\"}]";
+        GitHubClient client = new GitHubClient();
+        List<String> files = client.parsePullRequestFiles(json);
+        assertEquals(List.of("file1.txt", "file2.txt"), files);
+    }
+
+    @Test
+    public void testParseMergeCommitFiles() throws Exception {
+        String json = "{\"files\": [{\"filename\": \"file3.txt\"}], \"parents\": [{\"sha\": \"abc\"}, {\"sha\": \"def\"}]}";
+        GitHubClient.CommitResponse commitResponse = objectMapper.readValue(json, GitHubClient.CommitResponse.class);
+        List<String> files = commitResponse.getFiles().stream()
+                .map(GitHubClient.CommitFile::getFilename)
+                .collect(Collectors.toList());
+        assertEquals(List.of("file3.txt"), files);
+        assertEquals(2, commitResponse.getParents().size());
+    }
+}
+```
+
+### Explanation
+1. **GitHubClient**: This class handles HTTP requests to GitHub's API and parses the JSON responses. It includes methods to retrieve changed files from a pull request and a merge commit.
+2. **GitHubFileDetector**: The main class processes command-line arguments to determine the mode (pull request or merge commit) and uses `GitHubClient` to fetch and display changed files.
+3. **Unit Tests**: The tests verify the JSON parsing logic using sample responses to ensure correct extraction of filenames.
+
+### Dependencies
+- **Jackson Databind**: For JSON parsing.
+- **JUnit Jupiter**: For unit testing.
+- **Java 11+**: Required for `HttpClient`.
+
+This solution efficiently retrieves and processes GitHub data, ensuring accurate detection of changed files in specified scenarios.
