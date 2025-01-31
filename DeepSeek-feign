@@ -1,0 +1,302 @@
+Here's a refined implementation using Feign Client with proper separation of concerns, error handling, and unit tests:
+
+### Solution Code
+
+#### pom.xml
+```xml
+<dependencies>
+    <dependency>
+        <groupId>io.github.openfeign</groupId>
+        <artifactId>feign-core</artifactId>
+        <version>12.4</version>
+    </dependency>
+    <dependency>
+        <groupId>io.github.openfeign</groupId>
+        <artifactId>feign-jackson</artifactId>
+        <version>12.4</version>
+    </dependency>
+    <dependency>
+        <groupId>com.squareup.okhttp3</groupId>
+        <artifactId>okhttp</artifactId>
+        <version>4.10.0</version>
+    </dependency>
+    <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-api</artifactId>
+        <version>5.9.2</version>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.mockito</groupId>
+        <artifactId>mockito-core</artifactId>
+        <version>5.2.0</version>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
+```
+
+#### GitHubClient.java (Feign Interface)
+```java
+import feign.Headers;
+import feign.Param;
+import feign.RequestLine;
+import java.util.List;
+
+public interface GitHubClient {
+    @RequestLine("GET /repos/{owner}/{repo}/pulls/{prNumber}/files")
+    @Headers("Accept: application/vnd.github.v3+json")
+    List<PullRequestFile> getPullRequestFiles(
+        @Param("owner") String owner,
+        @Param("repo") String repo,
+        @Param("prNumber") int prNumber
+    );
+
+    @RequestLine("GET /repos/{owner}/{repo}/commits/{commitSha}")
+    @Headers("Accept: application/vnd.github.v3+json")
+    Commit getCommit(
+        @Param("owner") String owner,
+        @Param("repo") String repo,
+        @Param("commitSha") String commitSha
+    );
+
+    class PullRequestFile {
+        private String filename;
+        public String getFilename() { return filename; }
+    }
+
+    class Commit {
+        private List<Parent> parents;
+        private List<CommitFile> files;
+        public List<Parent> getParents() { return parents; }
+        public List<CommitFile> getFiles() { return files; }
+    }
+
+    class CommitFile {
+        private String filename;
+        public String getFilename() { return filename; }
+    }
+
+    class Parent {
+        private String sha;
+    }
+}
+```
+
+#### GitHubService.java
+```java
+import feign.Feign;
+import feign.jackson.JacksonDecoder;
+import java.util.List;
+import java.util.stream.Collectors;
+
+public class GitHubService {
+    private final GitHubClient gitHubClient;
+
+    public GitHubService() {
+        this.gitHubClient = Feign.builder()
+            .decoder(new JacksonDecoder())
+            .target(GitHubClient.class, "https://api.github.com");
+    }
+
+    public List<String> getChangedFilesInPR(String owner, String repo, int prNumber) {
+        return gitHubClient.getPullRequestFiles(owner, repo, prNumber)
+            .stream()
+            .map(GitHubClient.PullRequestFile::getFilename)
+            .collect(Collectors.toList());
+    }
+
+    public List<String> getChangedFilesInMergeCommit(String owner, String repo, String commitSha) {
+        GitHubClient.Commit commit = gitHubClient.getCommit(owner, repo, commitSha);
+        
+        if (commit.getParents().size() < 2) {
+            throw new IllegalArgumentException("Commit is not a merge commit");
+        }
+        
+        return commit.getFiles().stream()
+            .map(GitHubClient.CommitFile::getFilename)
+            .collect(Collectors.toList());
+    }
+}
+```
+
+#### GitHubFileDetector.java (Main Class)
+```java
+import java.util.List;
+
+public class GitHubFileDetector {
+    public static void main(String[] args) {
+        if (args.length < 4) {
+            printUsage();
+            System.exit(1);
+        }
+
+        String mode = args[0].toLowerCase();
+        String owner = args[1];
+        String repo = args[2];
+        String identifier = args[3];
+
+        GitHubService service = new GitHubService();
+        
+        try {
+            List<String> files = switch (mode) {
+                case "pr" -> handlePullRequest(service, owner, repo, identifier);
+                case "merge" -> handleMergeCommit(service, owner, repo, identifier);
+                default -> throw new IllegalArgumentException("Invalid mode");
+            };
+            
+            printResults(files);
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            System.exit(2);
+        }
+    }
+
+    private static List<String> handlePullRequest(GitHubService service, String owner, 
+                                                 String repo, String identifier) {
+        try {
+            int prNumber = Integer.parseInt(identifier);
+            return service.getChangedFilesInPR(owner, repo, prNumber);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid PR number: " + identifier);
+        }
+    }
+
+    private static List<String> handleMergeCommit(GitHubService service, String owner,
+                                                 String repo, String identifier) {
+        return service.getChangedFilesInMergeCommit(owner, repo, identifier);
+    }
+
+    private static void printResults(List<String> files) {
+        if (files.isEmpty()) {
+            System.out.println("No files changed");
+            return;
+        }
+        System.out.println("Changed files (" + files.size() + "):");
+        files.forEach(System.out::println);
+    }
+
+    private static void printUsage() {
+        System.err.println("Usage: <mode> <owner> <repo> <identifier>");
+        System.err.println("Modes:");
+        System.err.println("  pr <owner> <repo> <prNumber>    - Detect files in pull request");
+        System.err.println("  merge <owner> <repo> <commitSha> - Detect files in merge commit");
+    }
+}
+```
+
+#### GitHubServiceTest.java (Unit Tests)
+```java
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import java.util.List;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class GitHubServiceTest {
+    @Mock
+    private GitHubClient gitHubClient;
+
+    @InjectMocks
+    private GitHubService gitHubService;
+
+    @Test
+    void testGetPullRequestFiles() {
+        when(gitHubClient.getPullRequestFiles("octocat", "Hello-World", 1))
+            .thenReturn(List.of(
+                new GitHubClient.PullRequestFile("file1.txt"),
+                new GitHubClient.PullRequestFile("file2.java")
+            ));
+
+        List<String> files = gitHubService.getChangedFilesInPR("octocat", "Hello-World", 1);
+        assertEquals(2, files.size());
+        assertIterableEquals(List.of("file1.txt", "file2.java"), files);
+    }
+
+    @Test
+    void testValidMergeCommit() {
+        GitHubClient.Commit mockCommit = new GitHubClient.Commit();
+        mockCommit.parents = List.of(new GitHubClient.Parent(), new GitHubClient.Parent());
+        mockCommit.files = List.of(
+            new GitHubClient.CommitFile("merge-file1.txt"),
+            new GitHubClient.CommitFile("merge-file2.java")
+        );
+
+        when(gitHubClient.getCommit("org", "repo", "abc123"))
+            .thenReturn(mockCommit);
+
+        List<String> files = gitHubService.getChangedFilesInMergeCommit("org", "repo", "abc123");
+        assertEquals(2, files.size());
+        assertTrue(files.containsAll(List.of("merge-file1.txt", "merge-file2.java")));
+    }
+
+    @Test
+    void testNonMergeCommit() {
+        GitHubClient.Commit mockCommit = new GitHubClient.Commit();
+        mockCommit.parents = List.of(new GitHubClient.Parent());
+
+        when(gitHubClient.getCommit("org", "repo", "singleparent"))
+            .thenReturn(mockCommit);
+
+        assertThrows(IllegalArgumentException.class, () -> 
+            gitHubService.getChangedFilesInMergeCommit("org", "repo", "singleparent")
+        );
+    }
+
+    @Test
+    void testEmptyFileList() {
+        when(gitHubClient.getPullRequestFiles("empty", "repo", 999))
+            .thenReturn(List.of());
+
+        List<String> files = gitHubService.getChangedFilesInPR("empty", "repo", 999);
+        assertTrue(files.isEmpty());
+    }
+}
+```
+
+### Key Features:
+1. **Feign Client Integration**:
+  - Declarative REST client with automatic JSON parsing
+  - Handles GitHub API response structure
+  - Supports both pull requests and merge commits
+
+2. **Error Handling**:
+  - Validates merge commits by checking parent count
+  - Handles invalid PR numbers and API errors
+  - Clear user feedback for common errors
+
+3. **Testing**:
+   - Comprehensive unit tests with Mockito
+   - Covers both success and error scenarios
+   - Verifies response parsing and validation logic
+
+4. **Modern Java Features**:
+   - Uses Java 17+ pattern matching in switch statements
+   - Stream API for data transformation
+   - Clear separation of concerns
+
+To run the program:
+```bash
+# For pull request analysis
+java GitHubFileDetector pr octocat Hello-World 123
+
+# For merge commit analysis
+java GitHubFileDetector merge apache kafka abcdef123
+```
+
+### Enhancements over previous version:
+- Better error handling with specific exception messages
+- Improved code organization with helper methods
+- More comprehensive test coverage
+- Type-safe API responses with nested DTO classes
+- Cleaner user output formatting
+- Proper input validation and error codes
+
+Note: To access private repositories or handle rate limits, you would need to add an authentication header:
+```java
+// In GitHubService constructor add:
+.requestInterceptor(template -> template.header("Authorization", "token YOUR_GH_TOKEN"))
+```
