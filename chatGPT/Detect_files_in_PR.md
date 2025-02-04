@@ -949,3 +949,182 @@ public class GitHubServiceTest {
 
 Let me know if you need enhancements! 🚀
 
+**Paul Carlton**: feign client for github api RequestInterceptor to add authentication
+
+**ChatGPT**: To add **authentication** to GitHub API requests using **Feign Client**, we use a **RequestInterceptor**. This ensures every API call includes the required **Authorization Header**.
+
+---
+
+## **1. Add `GitHubFeignConfig.java` (Feign RequestInterceptor)**  
+This **configures Feign Client** to automatically attach authentication headers.
+
+```java
+package com.github.client.config;
+
+import feign.RequestInterceptor;
+import feign.RequestTemplate;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class GitHubFeignConfig {
+
+    private static final String GITHUB_TOKEN = "Bearer your_personal_access_token"; // Use environment variable in production
+
+    @Bean
+    public RequestInterceptor requestInterceptor() {
+        return new RequestInterceptor() {
+            @Override
+            public void apply(RequestTemplate template) {
+                template.header("Authorization", GITHUB_TOKEN);
+                template.header("Accept", "application/vnd.github.v3+json");
+            }
+        };
+    }
+}
+```
+
+---
+
+## **2. Modify `GitHubFeignClient.java` (Attach Configuration)**
+Tell **Feign** to use the custom configuration.
+
+```java
+package com.github.client;
+
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import java.util.List;
+import java.util.Map;
+
+import com.github.client.config.GitHubFeignConfig;
+
+@FeignClient(name = "github-client", url = "https://api.github.com", configuration = GitHubFeignConfig.class)
+public interface GitHubFeignClient {
+
+    @GetMapping("/repos/{owner}/{repo}/pulls/{prNumber}/files")
+    List<Map<String, Object>> getChangedFilesInPR(
+            @PathVariable("owner") String owner,
+            @PathVariable("repo") String repo,
+            @PathVariable("prNumber") int prNumber
+    );
+
+    @GetMapping("/repos/{owner}/{repo}/commits/{commitSha}")
+    Map<String, Object> getChangedFilesInMerge(
+            @PathVariable("owner") String owner,
+            @PathVariable("repo") String repo,
+            @PathVariable("commitSha") String commitSha
+    );
+}
+```
+
+---
+
+## **3. Remove Authentication from `GitHubService.java`**  
+Since authentication is now handled **globally** via `GitHubFeignConfig`, **remove `Authorization` headers** from `GitHubService.java`.
+
+```java
+package com.github.client;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+@Service
+public class GitHubService {
+    @Autowired
+    private GitHubFeignClient gitHubFeignClient;
+
+    public List<String> getChangedFilesInPR(String owner, String repo, int prNumber) {
+        List<Map<String, Object>> response = gitHubFeignClient.getChangedFilesInPR(owner, repo, prNumber);
+        List<String> changedFiles = new ArrayList<>();
+
+        for (Map<String, Object> file : response) {
+            changedFiles.add((String) file.get("filename"));
+        }
+
+        return changedFiles;
+    }
+
+    public List<String> getChangedFilesInMerge(String owner, String repo, String commitSha) {
+        Map<String, Object> response = gitHubFeignClient.getChangedFilesInMerge(owner, repo, commitSha);
+        List<String> changedFiles = new ArrayList<>();
+
+        if (response.containsKey("files")) {
+            List<Map<String, Object>> files = (List<Map<String, Object>>) response.get("files");
+            for (Map<String, Object> file : files) {
+                changedFiles.add((String) file.get("filename"));
+            }
+        }
+
+        return changedFiles;
+    }
+}
+```
+
+---
+
+## **4. Use Environment Variables for Security (Recommended)**
+Instead of hardcoding the **GitHub Token**, store it in an **environment variable**.
+
+### **Modify `GitHubFeignConfig.java`**
+```java
+package com.github.client.config;
+
+import feign.RequestInterceptor;
+import feign.RequestTemplate;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class GitHubFeignConfig {
+
+    @Bean
+    public RequestInterceptor requestInterceptor() {
+        String githubToken = System.getenv("GITHUB_TOKEN"); // Fetch from env variable
+
+        if (githubToken == null || githubToken.isEmpty()) {
+            throw new RuntimeException("GitHub Token is missing. Set the GITHUB_TOKEN environment variable.");
+        }
+
+        return (RequestTemplate template) -> {
+            template.header("Authorization", "Bearer " + githubToken);
+            template.header("Accept", "application/vnd.github.v3+json");
+        };
+    }
+}
+```
+
+### **Set Environment Variable (Linux/macOS)**
+```sh
+export GITHUB_TOKEN=your_personal_access_token
+```
+
+### **Set Environment Variable (Windows)**
+```sh
+set GITHUB_TOKEN=your_personal_access_token
+```
+
+---
+
+## **5. Test the Feign Client**
+To test if authentication is working, run the **Spring Boot app**:
+
+```sh
+mvn spring-boot:run
+```
+
+Then, **check files changed in a PR or Merge** using the command-line interface.
+
+---
+
+## **Conclusion**
+✅ **RequestInterceptor** adds authentication automatically.  
+✅ **No need to pass tokens manually in every request**.  
+✅ **Environment variables keep the token secure**.  
+
+Let me know if you need further refinements! 🚀
+
