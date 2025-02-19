@@ -449,7 +449,7 @@ These platforms allow **customized emails without needing to write backend code*
 
 Would you like help setting up a specific method, such as **Python email automation** or **Mailchimp templates**?
 
-**Paul Carlton**: {'content_type': 'image_asset_pointer', 'asset_pointer': 'file-service://file-QWfhF9LFZhKTfix1Py9boE', 'size_bytes': 3696570, 'width': 1152, 'height': 1536, 'fovea': None, 'metadata': {'dalle': None, 'gizmo': None, 'container_pixel_height': None, 'container_pixel_width': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'sanitized': True, 'asset_pointer_link': None}}
+**Paul Carlton**: {'content_type': 'image_asset_pointer', 'asset_pointer': 'file-service://file-QWfhF9LFZhKTfix1Py9boE', 'size_bytes': 3696570, 'width': 1152, 'height': 1536, 'fovea': None, 'metadata': {'dalle': None, 'gizmo': None, 'generation': None, 'container_pixel_height': None, 'container_pixel_width': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'sanitized': True, 'asset_pointer_link': None}}
 
 
 **ChatGPT**: This plaque describes the **calendar reform of 1752**, when **England adopted the Gregorian calendar** to replace the older **Julian calendar**. The Julian calendar had an accumulated error of **11 days** due to its slightly inaccurate leap year rule. To correct this, the British government decreed that **September 2, 1752, would be followed by September 14, 1752**, skipping **11 days**.
